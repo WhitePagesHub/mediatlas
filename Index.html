@@ -1,0 +1,427 @@
+﻿<!DOCTYPE html>
+<html lang="el">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MediAtlas – Demo με πινέζες σε 3D avatar</title>
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, Arial, sans-serif; }
+    #app { display: grid; grid-template-columns: 280px 1fr; height: 100%; }
+    /* Sidebar */
+    #sidebar { border-right: 1px solid #e5e5e5; padding: 12px; overflow: auto; }
+    #sidebar h2 { margin: 0 0 10px; font-size: 16px; }
+    #controls { display: grid; gap: 8px; margin-bottom: 12px; }
+    button { padding: 8px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
+    button.primary { background: #2d6cdf; color: white; border-color: #2d6cdf; }
+    button.danger { background: #d93025; color: white; border-color: #d93025; }
+    #pinForm { display: none; border: 1px solid #eee; border-radius: 8px; padding: 8px; background: #fafafa; }
+    #pinForm h3 { margin: 0 0 8px; font-size: 14px; }
+    label { font-size: 12px; color: #333; }
+    input[type="text"], textarea {
+      width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; margin-top: 4px; font-size: 13px;
+    }
+    #pinsList { display: grid; gap: 8px; }
+    .pinItem { border: 1px solid #eee; border-radius: 8px; padding: 8px; background: #fff; }
+    .pinHeader { display: flex; justify-content: space-between; align-items: center; }
+    .pinActions { display: flex; gap: 6px; }
+    .muted { color: #666; font-size: 12px; }
+    /* Viewer */
+    #viewer { position: relative; background: #0f172a; }
+    #canvas { width: 100%; height: 100%; display: block; }
+    #hint {
+      position: absolute; top: 10px; left: 10px; padding: 6px 8px; font-size: 12px;
+      background: rgba(0,0,0,0.5); color: #fff; border-radius: 6px;
+    }
+    #status {
+      position: absolute; bottom: 10px; left: 10px; padding: 6px 8px; font-size: 12px;
+      background: rgba(0,0,0,0.5); color: #fff; border-radius: 6px;
+    }
+    .selected { outline: 2px solid #2d6cdf; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <h2>Πινέζες</h2>
+      <div id="controls">
+        <button id="addPinBtn" class="primary">Προσθήκη πινέζας (κλικ στο μοντέλο)</button>
+        <button id="clearPinsBtn" class="danger">Διαγραφή όλων</button>
+        <button id="exportBtn">Εξαγωγή JSON</button>
+        <button id="importBtn">Εισαγωγή JSON</button>
+      </div>
+
+      <div id="pinForm">
+        <h3>Επεξεργασία πινέζας</h3>
+        <div><label>Τίτλος</label><input type="text" id="pinTitle" placeholder="π.χ. Υπερηχογράφημα Θυρεοειδούς"></div>
+        <div style="margin-top:8px;"><label>Σχόλια</label><textarea id="pinComment" rows="4" placeholder="Σύντομες παρατηρήσεις..."></textarea></div>
+        <div class="pinActions" style="margin-top:8px;">
+          <button id="savePinBtn" class="primary">Αποθήκευση</button>
+          <button id="deletePinBtn" class="danger">Διαγραφή</button>
+          <button id="cancelEditBtn">Άκυρο</button>
+        </div>
+      </div>
+
+      <p class="muted" style="margin-top:10px;">Κάνε κλικ σε μια πινέζα στη λίστα για επεξεργασία ή επίλεξέ την πάνω στο μοντέλο.</p>
+      <div id="pinsList"></div>
+    </aside>
+
+    <main id="viewer">
+      <div id="hint">Πλοήγηση: περιστροφή με ποντίκι, τροχός για ζουμ. Προσθήκη πινέζας: πάτα «Προσθήκη πινέζας» και κλικ στο μοντέλο.</div>
+      <canvas id="canvas"></canvas>
+      <div id="status">Φόρτωση μοντέλου…</div>
+    </main>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+    import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+    // --- Βασικό setup Three.js ---
+    const canvas = document.getElementById('canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth - 280, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0f172a);
+
+    const camera = new THREE.PerspectiveCamera(60, (window.innerWidth - 280) / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 1.4, 2.2);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // Φωτισμός
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.8);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(2, 4, 2);
+    scene.add(dir);
+
+    // --- Φόρτωση GLB ---
+    const statusEl = document.getElementById('status');
+    const loader = new GLTFLoader();
+    let model = null;
+
+    loader.load(
+      './CesiumMan.glb',
+      (gltf) => {
+        model = gltf.scene;
+        scene.add(model);
+        // Κεντράρισμα/κλίμακα για ευκολία
+        model.position.set(0, -1.0, 0);
+        model.scale.set(1.0, 1.0, 1.0);
+        statusEl.textContent = 'Έτοιμο. Πάτα «Προσθήκη πινέζας» και κλικ στο μοντέλο.';
+      },
+      (xhr) => {
+        statusEl.textContent = `Φόρτωση: ${Math.round((xhr.loaded / xhr.total) * 100)}%`;
+      },
+      (err) => {
+        statusEl.textContent = 'Σφάλμα φόρτωσης μοντέλου.';
+        console.error(err);
+      }
+    );
+
+    // --- Δημιουργία υφής για πινέζα (στρογγυλός δείκτης) ---
+    function makePinTexture(color = '#e11d48') {
+      const size = 128;
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, size, size);
+      // εξωτερικός κύκλος (λευκό περίγραμμα)
+      ctx.beginPath();
+      ctx.arc(size/2, size/2, size/2 - 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      // εσωτερικός κύκλος (χρώμα)
+      ctx.beginPath();
+      ctx.arc(size/2, size/2, size/2 - 12, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      return new THREE.CanvasTexture(c);
+    }
+
+    const pinMaterial = new THREE.SpriteMaterial({ map: makePinTexture('#ef4444'), depthTest: true, sizeAttenuation: true });
+    const selectedPinMaterial = new THREE.SpriteMaterial({ map: makePinTexture('#2d6cdf'), depthTest: true, sizeAttenuation: true });
+
+    // --- Κατάσταση πινέζας / δεδομένα ---
+    const addPinBtn = document.getElementById('addPinBtn');
+    const clearPinsBtn = document.getElementById('clearPinsBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const importBtn = document.getElementById('importBtn');
+
+    const pinForm = document.getElementById('pinForm');
+    const pinTitleInput = document.getElementById('pinTitle');
+    const pinCommentInput = document.getElementById('pinComment');
+    const savePinBtn = document.getElementById('savePinBtn');
+    const deletePinBtn = document.getElementById('deletePinBtn');
+    const cancelEditBtn = document.getElementById('cancelEditBtn');
+    const pinsListEl = document.getElementById('pinsList');
+
+    let addMode = false;
+    let pins = loadPins();
+    let selectedPinId = null;
+
+    // --- Raycaster για επιλογή/τοποθέτηση ---
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    function onPointerMove(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    }
+
+    function screenTo3DIntersection() {
+      if (!model) return null;
+      raycaster.setFromCamera(pointer, camera);
+      const intersects = raycaster.intersectObjects(model.children.length ? model.children : [model], true);
+      return intersects.length ? intersects[0] : null;
+    }
+
+    function createPinSprite(selected = false) {
+      const sprite = new THREE.Sprite(selected ? selectedPinMaterial : pinMaterial);
+      sprite.scale.set(0.06, 0.06, 0.06);
+      return sprite;
+    }
+
+    function addPinAt(point, normal) {
+      const id = crypto.randomUUID();
+      const sprite = createPinSprite(false);
+      sprite.position.copy(point.clone().add(normal.clone().multiplyScalar(0.01))); // λίγο πάνω από την επιφάνεια
+      sprite.userData = { id };
+
+      scene.add(sprite);
+
+      const newPin = {
+        id,
+        title: 'Νέα πινέζα',
+        comment: '',
+        position: sprite.position.toArray(),
+        normal: normal.toArray(),
+        selected: false
+      };
+      pins.push(newPin);
+      savePins();
+      renderPinsList();
+      selectPin(id);
+    }
+
+    function selectPin(id) {
+      selectedPinId = id;
+      // Ενημέρωση εμφάνισης sprite
+      scene.traverse(obj => {
+        if (obj.isSprite && obj.userData && obj.userData.id) {
+          obj.material = (obj.userData.id === id) ? selectedPinMaterial : pinMaterial;
+        }
+      });
+      // Εμφάνιση φόρμας
+      const pin = pins.find(p => p.id === id);
+      if (!pin) return;
+      pinTitleInput.value = pin.title || '';
+      pinCommentInput.value = pin.comment || '';
+      pinForm.style.display = 'block';
+      // Επιλογή στη λίστα
+      document.querySelectorAll('.pinItem').forEach(el => el.classList.remove('selected'));
+      const el = document.querySelector(`.pinItem[data-id="${id}"]`);
+      if (el) el.classList.add('selected');
+    }
+
+    function deselectPin() {
+      selectedPinId = null;
+      pinForm.style.display = 'none';
+      scene.traverse(obj => {
+        if (obj.isSprite && obj.userData && obj.userData.id) obj.material = pinMaterial;
+      });
+      document.querySelectorAll('.pinItem').forEach(el => el.classList.remove('selected'));
+    }
+
+    function deleteSelectedPin() {
+      if (!selectedPinId) return;
+      // Αφαίρεση από σκηνή
+      const objs = [];
+      scene.traverse(obj => { if (obj.isSprite && obj.userData && obj.userData.id === selectedPinId) objs.push(obj); });
+      objs.forEach(o => scene.remove(o));
+      // Αφαίρεση από δεδομένα
+      pins = pins.filter(p => p.id !== selectedPinId);
+      savePins();
+      renderPinsList();
+      deselectPin();
+    }
+
+    function saveSelectedPin() {
+      if (!selectedPinId) return;
+      const pin = pins.find(p => p.id === selectedPinId);
+      if (!pin) return;
+      pin.title = pinTitleInput.value.trim();
+      pin.comment = pinCommentInput.value.trim();
+      savePins();
+      renderPinsList();
+    }
+
+    function clearAllPins() {
+      const sprites = [];
+      scene.traverse(obj => { if (obj.isSprite) sprites.push(obj); });
+      sprites.forEach(s => scene.remove(s));
+      pins = [];
+      savePins();
+      renderPinsList();
+      deselectPin();
+    }
+
+    function renderPinsSprites() {
+      // Καθαρισμός υπαρχόντων sprites
+      const sprites = [];
+      scene.traverse(obj => { if (obj.isSprite) sprites.push(obj); });
+      sprites.forEach(s => scene.remove(s));
+      // Εκ νέου προσθήκη από δεδομένα
+      pins.forEach(p => {
+        const sprite = createPinSprite(selectedPinId === p.id);
+        sprite.position.fromArray(p.position);
+        sprite.userData = { id: p.id };
+        scene.add(sprite);
+      });
+    }
+
+    function renderPinsList() {
+      pinsListEl.innerHTML = '';
+      pins.forEach(p => {
+        const item = document.createElement('div');
+        item.className = 'pinItem' + (selectedPinId === p.id ? ' selected' : '');
+        item.dataset.id = p.id;
+        item.innerHTML = `
+          <div class="pinHeader">
+            <strong>${escapeHtml(p.title || 'Πινέζα')}</strong>
+            <div class="pinActions">
+              <button data-action="edit">Επεξεργασία</button>
+              <button data-action="delete" class="danger">Διαγραφή</button>
+            </div>
+          </div>
+          <div class="muted">${escapeHtml(p.comment || '—')}</div>
+        `;
+        item.addEventListener('click', (e) => {
+          const action = e.target?.dataset?.action;
+          if (action === 'delete') {
+            selectedPinId = p.id;
+            deleteSelectedPin();
+            return;
+          }
+          selectPin(p.id);
+        });
+        pinsListEl.appendChild(item);
+      });
+      renderPinsSprites();
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+    }
+
+    // --- LocalStorage ---
+    function savePins() {
+      localStorage.setItem('mediatlas_pins', JSON.stringify(pins));
+    }
+    function loadPins() {
+      try {
+        const raw = localStorage.getItem('mediatlas_pins');
+        return raw ? JSON.parse(raw) : [];
+      } catch (e) { return []; }
+    }
+
+    // --- Εισαγωγή/Εξαγωγή JSON ---
+    exportBtn.addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(pins, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'mediatlas_pins.json'; a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    importBtn.addEventListener('click', async () => {
+      const input = document.createElement('input');
+      input.type = 'file'; input.accept = 'application/json';
+      input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+        const text = await file.text();
+        try {
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) {
+            pins = data;
+            savePins();
+            renderPinsList();
+          }
+        } catch (e) { alert('Μη έγκυρο JSON'); }
+      };
+      input.click();
+    });
+
+    // --- Χειρισμοί UI ---
+    addPinBtn.addEventListener('click', () => {
+      addMode = true;
+      statusEl.textContent = 'Προσθήκη πινέζας: κλικ πάνω στο μοντέλο για τοποθέτηση.';
+    });
+
+    clearPinsBtn.addEventListener('click', () => {
+      if (confirm('Διαγραφή όλων των πινέζων;')) clearAllPins();
+    });
+
+    savePinBtn.addEventListener('click', saveSelectedPin);
+    deletePinBtn.addEventListener('click', deleteSelectedPin);
+    cancelEditBtn.addEventListener('click', deselectPin);
+
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+
+    renderer.domElement.addEventListener('pointerdown', (event) => {
+      onPointerMove(event);
+      const hit = screenTo3DIntersection();
+      if (!hit) return;
+
+      // Αν είμαστε σε add mode → δημιουργία πινέζας
+      if (addMode) {
+        addMode = false;
+        addPinAt(hit.point, hit.face?.normal || new THREE.Vector3(0,1,0));
+        statusEl.textContent = 'Πινέζα προστέθηκε. Κάνε κλικ για επεξεργασία.';
+        return;
+      }
+
+      // Αλλιώς έλεγχος αν πάτησε πάνω σε sprite (επιλογή)
+      const spriteHit = raycastSprites();
+      if (spriteHit) {
+        selectPin(spriteHit.userData.id);
+      } else {
+        deselectPin();
+      }
+    });
+
+    function raycastSprites() {
+      // Απλός έλεγχος κοντινότερου sprite με δεύτερο raycast
+      raycaster.setFromCamera(pointer, camera);
+      const sprites = [];
+      scene.traverse(obj => { if (obj.isSprite) sprites.push(obj); });
+      const intersects = raycaster.intersectObjects(sprites, true);
+      return intersects.length ? intersects[0].object : null;
+    }
+
+    // --- Βρόχος απόδοσης ---
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // --- Προσαρμογή μεγέθους ---
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth - 280, window.innerHeight);
+      camera.aspect = (window.innerWidth - 280) / window.innerHeight;
+      camera.updateProjectionMatrix();
+    });
+
+    // Απόδοση αρχικής λίστας από localStorage
+    renderPinsList();
+  </script>
+</body>
+</html>
