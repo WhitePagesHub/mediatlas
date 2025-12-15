@@ -2,21 +2,16 @@
 <html lang="el">
 <head>
   <meta charset="UTF-8">
-  <title>MediAtlas Demo</title>
+  <title>Demo Cube</title>
   <style>
     body { margin: 0; }
     canvas { display: block; }
   </style>
 </head>
 <body>
-  <div id="status">Φόρτωση...</div>
-
-  <!-- Φόρτωση Three.js και GLTFLoader από CDN -->
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
-    import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js";
 
-    // Σκηνή, κάμερα, renderer
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -27,28 +22,18 @@
     const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
     scene.add(light);
 
-    // Loader για GLB
-    const loader = new GLTFLoader();
-    loader.load(
-      "CesiumMan.glb", // το αρχείο σου στο root
-      (gltf) => {
-        scene.add(gltf.scene);
-        document.getElementById("status").textContent = "Φόρτωση ολοκληρώθηκε!";
-      },
-      (xhr) => {
-        document.getElementById("status").textContent = `Φόρτωση: ${Math.round((xhr.loaded / xhr.total) * 100)}%`;
-      },
-      (error) => {
-        console.error("Σφάλμα φόρτωσης:", error);
-        document.getElementById("status").textContent = "Αποτυχία φόρτωσης μοντέλου.";
-      }
-    );
+    // Δημιουργία κύβου
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const material = new THREE.MeshStandardMaterial({ color: 0x3399ff });
+    const cube = new THREE.Mesh(geometry, material);
+    scene.add(cube);
 
-    camera.position.z = 5;
+    camera.position.z = 3;
 
-    // Render loop
     function animate() {
       requestAnimationFrame(animate);
+      cube.rotation.x += 0.01;
+      cube.rotation.y += 0.01;
       renderer.render(scene, camera);
     }
     animate();
